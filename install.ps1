@@ -122,4 +122,9 @@ $shimDir = "$env:SystemRoot\System32"
 @echo off
 powershell -NoProfile -ExecutionPolicy Bypass -File "%ProgramData%\ddos-protect\ddos-protect.ps1" %*
 "@ | Set-Content -Path (Join-Path $shimDir 'ddos-protect.cmd') -Encoding ASCII
-Write-Note 'Master switch installed: ddos-protect on | off | status | restart'
+@"
+$Script:DDOS_VERSION
+$Script:ScriptRoot
+"@ | Set-Content -Path (Join-Path $ctlDir 'version') -Encoding ASCII
+Write-Note "Master switch installed: ddos-protect on | off | status | bans | update"
+Write-Note "Installed version v$Script:DDOS_VERSION"

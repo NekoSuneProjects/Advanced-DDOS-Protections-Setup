@@ -177,6 +177,33 @@ Filtering Platform.
 
 ---
 
+## Updating
+
+```bash
+sudo ddos-protect version          # show installed version
+sudo ddos-protect update-check     # read-only check against GitHub CHANGELOG.md
+sudo ddos-protect update           # check, show changelog of newer versions, prompt, git pull + re-install
+```
+```powershell
+ddos-protect version
+ddos-protect update-check
+ddos-protect update
+```
+
+`update-check` fetches [`CHANGELOG.md`](CHANGELOG.md) from the `main` branch,
+parses the latest `## [x.y.z]` heading, and compares it with the installed
+version recorded at install time. When a newer version exists, every changelog
+section between the latest release and yours is printed before the update
+runs — no surprise changes.
+
+`update` does a `git fetch + reset --hard origin/main` in the install
+directory (`/opt/ddos-protect` on Linux, `C:\ProgramData\ddos-protect-src` on
+Windows), then re-runs the installer in "Full install" mode. Configs in
+`/etc/ddos-protect` / `%ProgramData%\ddos-protect` are not touched —
+whitelist, notify settings, Cloudflare token survive the upgrade.
+
+---
+
 ## Whitelist / allowlist
 
 Add your management IP **before** you tighten the firewall. Otherwise rate-limits

@@ -172,7 +172,10 @@ main() {
 
 install_control_cli() {
     install -m 0755 "${SCRIPT_DIR}/scripts/ddos-protect" /usr/local/bin/ddos-protect
-    note "Master switch installed: ddos-protect on | off | status | restart"
+    mkdir -p /etc/ddos-protect
+    printf '%s\n%s\n' "$DDOS_VERSION" "$SCRIPT_DIR" > /etc/ddos-protect/version
+    note "Master switch installed: ddos-protect on | off | status | bans | update"
+    note "Installed version v${DDOS_VERSION}"
 }
 
 main "$@"

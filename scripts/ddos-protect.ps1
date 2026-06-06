@@ -62,6 +62,89 @@ function Show-Status {
     Write-Host '  4625 alert: ' -NoNewline; Paint (Get-TaskState 'DDoS-Protect Audit Burst'); Write-Host ''
 }
 
+$Script:RepoRaw = 'https://raw.githubusercontent.com/NekoSuneProjects/Advanced-DDOS-Protections-Setup/main'
+
+function Get-CurrentVersion {
+    $f = Join-Path $env:ProgramData 'ddos-protect\version'
+    if (Test-Path $f) { (Get-Content -TotalCount 1 -Path $f).Trim() } else { '1.0.0' }
+}
+function Get-InstallDir {
+    $f = Join-Path $env:ProgramData 'ddos-protect\version'
+    if (Test-Path $f) {
+        $lines = Get-Content -Path $f
+        if ($lines.Count -ge 2) { return $lines[1].Trim() }
+    }
+    return (Join-Path $env:ProgramData 'ddos-protect-src')
+}
+
+function Show-Version {
+    Write-Host ('ddos-protect ') -NoNewline
+    Write-Host ("v$(Get-CurrentVersion)") -ForegroundColor Green -NoNewline
+    Write-Host ("   (install dir: $(Get-InstallDir))") -ForegroundColor DarkGray
+}
+
+function Test-Update {
+    param([string]$Current = (Get-CurrentVersion))
+    try {
+        $cl = Invoke-WebRequest -Uri "$($Script:RepoRaw)/CHANGELOG.md" -TimeoutSec 10 -UseBasicParsing
+        $body = $cl.Content
+    } catch {
+        Write-Host 'Could not fetch CHANGELOG.md from GitHub' -ForegroundColor Red
+        return $null
+    }
+    $m = [regex]::Match($body, '(?m)^## \[(\d+\.\d+\.\d+)\]')
+    if (-not $m.Success) {
+        Write-Host 'Could not parse latest version from CHANGELOG.md' -ForegroundColor Red
+        return $null
+    }
+    $latest = $m.Groups[1].Value
+
+    if ($Current -eq $latest) {
+        Write-Host "Up to date " -ForegroundColor Green -NoNewline
+        Write-Host "(v$Current)"
+        return @{ Latest=$latest; HasUpdate=$false; Changelog='' }
+    }
+    if ([version]$latest -lt [version]$Current) {
+        Write-Host "Local v$Current is ahead of GitHub v$latest" -ForegroundColor Yellow
+        return @{ Latest=$latest; HasUpdate=$false; Changelog='' }
+    }
+
+    Write-Host "Update available: " -ForegroundColor Yellow -NoNewline
+    Write-Host "v$Current -> v$latest" -ForegroundColor Green
+    Write-Host ''
+
+    # Slice the changelog from latest's heading down to current's heading.
+    $start = $body.IndexOf("## [$latest]")
+    $end   = $body.IndexOf("## [$Current]")
+    if ($end -lt 0) { $end = $body.Length }
+    Write-Host ('-- Changelog ' + ('-' * 40)) -ForegroundColor DarkGray
+    Write-Host ($body.Substring($start, $end - $start).TrimEnd())
+    Write-Host ('-' * 53) -ForegroundColor DarkGray
+    return @{ Latest=$latest; HasUpdate=$true; Changelog=$body.Substring($start, $end - $start) }
+}
+
+function Invoke-Update {
+    Assert-Admin
+    $r = Test-Update
+    if (-not $r -or -not $r.HasUpdate) { return }
+    Write-Host ''
+    $a = Read-Host '? Apply update now? [Y/n]'
+    if ($a -and $a.ToLower() -notin @('y','yes','')) { Write-Host 'Skipped.'; return }
+    $dir = Get-InstallDir
+    if (Test-Path (Join-Path $dir '.git')) {
+        Write-Host "Fetching origin/main..." -ForegroundColor DarkGray
+        git -C $dir fetch --quiet --depth=1 origin main
+        git -C $dir reset --hard origin/main
+    } else {
+        Write-Host "No git checkout at $dir - re-running bootstrap" -ForegroundColor Yellow
+        Invoke-Expression (Invoke-WebRequest -Uri "$($Script:RepoRaw)/bootstrap.ps1" -UseBasicParsing).Content
+        return
+    }
+    Write-Host 'Re-running install.ps1 (full install)...' -ForegroundColor DarkGray
+    & (Join-Path $dir 'install.ps1')
+    Write-Host 'Update complete.' -ForegroundColor Green
+}
+
 function Show-Bans {
     param([switch]$Top, [switch]$Geo, [int]$Hours = 24)
 
@@ -203,6 +286,9 @@ switch ($Command.ToLower()) {
     'stats' { Show-Stats }
     'ban'   { Add-Ban   ($args | Select-Object -First 1) }
     'unban' { Remove-Ban ($args | Select-Object -First 1) }
+    { $_ -in 'version','-v','--version' } { Show-Version }
+    'update-check' { Test-Update | Out-Null }
+    'update'       { Invoke-Update }
     { $_ -in 'help','-h','--help','/?' } {
         @'
 Usage: ddos-protect <command>
@@ -217,6 +303,9 @@ Usage: ddos-protect <command>
   stats          Detailed: last watcher sample + top connected peers
   ban <ip>       Add a manual block rule to the DDoS-Protect group
   unban <ip>     Remove any DDoS-Protect rule matching that IP
+  version        Show installed version
+  update-check   Check GitHub CHANGELOG.md for a newer release
+  update         Check, then git pull + re-run install.ps1 if newer is available
 
 Components controlled:
   - Windows Firewall rules tagged Group "DDoS-Protect"
