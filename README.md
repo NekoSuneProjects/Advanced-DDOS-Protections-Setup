@@ -150,6 +150,31 @@ What gets toggled:
 
 Cloudflare "Under Attack" mode is a separate switch: `ddos-cf on` / `ddos-cf off`.
 
+### See who's banned, where, and why
+
+```bash
+sudo ddos-protect bans            # every banned IP grouped by jail + lifetime counts
+sudo ddos-protect bans --top      # top jails by current ban count
+sudo ddos-protect bans --geo      # add country / ISP / city (ip-api.com free tier)
+sudo ddos-protect stats           # firewall drop counters + last watcher sample + top peers
+sudo ddos-protect ban   1.2.3.4   # manual ban (default jail: sshd)
+sudo ddos-protect unban 1.2.3.4   # manual unban (use "all" as jail to wipe everywhere)
+```
+
+```powershell
+ddos-protect bans                 # failed logons last 24h grouped by source IP
+ddos-protect bans --top           # top 20 offenders
+ddos-protect bans --geo           # with GeoIP/ISP lookup
+ddos-protect stats                # last watcher sample + top connected peers
+ddos-protect ban   1.2.3.4        # add a manual block rule
+ddos-protect unban 1.2.3.4
+```
+
+Shows: per-jail breakdown, currently-banned vs lifetime totals, source jails for
+each IP, optional GeoIP lookup (no API key — uses ip-api.com free tier, capped
+to 25 lookups), and firewall drop counters from `iptables`/`pf`/Windows
+Filtering Platform.
+
 ---
 
 ## Whitelist / allowlist

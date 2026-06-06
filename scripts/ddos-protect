@@ -135,10 +135,16 @@ cmd_help() {
     cat <<USE
 Usage: ddos-protect <command>
 
-  on         Enable firewall hook, start fail2ban, start watcher
-  off        Disable everything (configs stay in place)
-  status     Show on/off state of each component
-  restart    off then on
+  on             Enable firewall hook, start fail2ban, start watcher
+  off            Disable everything (configs stay in place)
+  status         Show on/off state of each component
+  restart        off then on
+  bans           List banned IPs grouped by jail (and lifetime counts)
+  bans --top     Show top jails by current ban count
+  bans --geo     Add GeoIP/ISP per banned IP (uses ip-api.com free tier)
+  stats          Detailed: chain drop counters + watcher sample + top peers
+  ban <ip> [j]   Add manual ban (default jail: sshd)
+  unban <ip> [j] Remove ban (jail name or "all")
 
 Components controlled:
   • Edge firewall (iptables chain / nftables table / pf state)
@@ -151,6 +157,136 @@ For permanent removal:                 sudo /opt/ddos-protect/uninstall.sh
 USE
 }
 
+# ---------- Banned IPs ----------
+cmd_bans() {
+    local geo=0 top=0 a
+    for a in "$@"; do
+        case "$a" in
+            --geo) geo=1 ;;
+            --top) top=1 ;;
+        esac
+    done
+
+    if ! command -v fail2ban-client >/dev/null 2>&1; then
+        echo "${YELLOW}fail2ban not installed — no jail bans to show${RESET}"
+    else
+        local jails total=0 currently=0
+        jails=$(fail2ban-client status 2>/dev/null \
+            | sed -n 's/.*Jail list:[[:space:]]*//p' | tr ',' ' ')
+        if [[ -z "$jails" ]]; then
+            echo "${YELLOW}fail2ban running but no jails active${RESET}"
+        else
+            printf '%s%-22s %-9s %-9s %s%s\n' "$DIM" "Jail" "Active" "Lifetime" "Currently banned IPs" "$RESET"
+            local -a all_ips=()
+            local -a all_jails=()
+            for j in $jails; do
+                local s cur tot ips
+                s=$(fail2ban-client status "$j" 2>/dev/null) || continue
+                cur=$(awk -F: '/Currently banned/  {gsub(/^ +| +$/,"",$2); print $2}' <<<"$s")
+                tot=$(awk -F: '/Total banned/      {gsub(/^ +| +$/,"",$2); print $2}' <<<"$s")
+                ips=$(awk -F: '/Banned IP list/    {sub(/^[^:]+:[[:space:]]*/,""); print}' <<<"$s")
+                cur="${cur:-0}"; tot="${tot:-0}"
+                currently=$((currently + cur))
+                total=$((total + tot))
+                printf '%-22s %-9d %-9d %s\n' "$j" "$cur" "$tot" "${ips:-—}"
+                if (( cur > 0 )); then
+                    for ip in $ips; do
+                        all_ips+=( "$ip" )
+                        all_jails+=( "$j" )
+                    done
+                fi
+            done
+            echo
+            printf 'Total currently banned: %s%d%s   Lifetime bans: %s%d%s\n' \
+                "$GREEN" "$currently" "$RESET" "$DIM" "$total" "$RESET"
+
+            if (( top )) && (( currently > 0 )); then
+                echo
+                echo "${DIM}Top jails by current bans:${RESET}"
+                printf '%s\n' "${all_jails[@]}" | sort | uniq -c | sort -rn | head -10 \
+                    | awk '{printf "  %-22s %s\n", $2, $1}'
+            fi
+
+            if (( geo )) && (( currently > 0 )); then
+                if ! command -v curl >/dev/null 2>&1; then
+                    echo "${YELLOW}--geo needs curl${RESET}"
+                else
+                    echo
+                    echo "${DIM}GeoIP (ip-api.com, free tier):${RESET}"
+                    printf '%-18s %-22s %-3s %-25s %s\n' "IP" "Jail" "CC" "ISP" "City"
+                    local i
+                    for i in "${!all_ips[@]}"; do
+                        (( i >= 25 )) && { echo "  …(truncated)"; break; }
+                        local ip="${all_ips[$i]}" j="${all_jails[$i]}"
+                        local r
+                        r=$(curl -sS -m 4 "http://ip-api.com/json/${ip}?fields=country,countryCode,isp,city" 2>/dev/null) || r=""
+                        local cc isp city
+                        cc=$(sed -n 's/.*"countryCode":"\([^"]*\)".*/\1/p' <<<"$r")
+                        isp=$(sed -n 's/.*"isp":"\([^"]*\)".*/\1/p' <<<"$r")
+                        city=$(sed -n 's/.*"city":"\([^"]*\)".*/\1/p' <<<"$r")
+                        printf '%-18s %-22s %-3s %-25s %s\n' "$ip" "$j" "${cc:-?}" "${isp:-?}" "${city:-?}"
+                        sleep 0.3   # ip-api free tier: 45 req/min
+                    done
+                fi
+            fi
+        fi
+    fi
+
+    # Firewall drop counts.
+    if command -v iptables >/dev/null 2>&1 && iptables -L DDOS_PROTECT -n >/dev/null 2>&1; then
+        echo
+        echo "${DIM}Firewall drop counters (DDOS_PROTECT chain):${RESET}"
+        iptables -L DDOS_PROTECT -n -v 2>/dev/null \
+            | awk 'NR<=2 || $1+0>0 {print "  "$0}'
+    fi
+    if command -v pfctl >/dev/null 2>&1 && pfctl -s rules 2>/dev/null | grep -q ddos-protect; then
+        echo
+        echo "${DIM}pf rule hit counters:${RESET}"
+        pfctl -s rules -v 2>/dev/null | awk '/ddos-protect/,/^[^ ]/' | head -40
+    fi
+}
+
+# ---------- Detailed stats ----------
+cmd_stats() {
+    cmd_status
+    echo
+    if [[ -r /var/lib/ddos-protect/last-sample.txt ]]; then
+        echo "${DIM}Last watcher sample:${RESET}"
+        sed 's/^/  /' /var/lib/ddos-protect/last-sample.txt
+    fi
+    echo
+    if command -v iptables >/dev/null 2>&1 && iptables -L DDOS_PROTECT -n >/dev/null 2>&1; then
+        echo "${DIM}DDOS_PROTECT chain (top 15 drop rules by packet count):${RESET}"
+        iptables -L DDOS_PROTECT -n -v 2>/dev/null \
+            | awk 'NR>2' | sort -rnk1 | head -15 | sed 's/^/  /'
+    fi
+    echo
+    if command -v ss >/dev/null 2>&1; then
+        echo "${DIM}Top 10 foreign IPs by established connections:${RESET}"
+        ss -ntH state established 2>/dev/null | awk '{print $5}' \
+            | sed 's/:[0-9]*$//' | sort | uniq -c | sort -rn | head -10 \
+            | awk '{printf "  %-18s %s\n", $2, $1}'
+    fi
+}
+
+# ---------- ban / unban (wrap fail2ban-client) ----------
+cmd_ban() {
+    [[ -n "${1:-}" ]] || { echo "usage: ddos-protect ban <ip> [jail]" >&2; exit 1; }
+    local ip="$1" jail="${2:-sshd}"
+    need_root ban
+    fail2ban-client set "$jail" banip "$ip"
+}
+cmd_unban() {
+    [[ -n "${1:-}" ]] || { echo "usage: ddos-protect unban <ip> [jail|all]" >&2; exit 1; }
+    local ip="$1" jail="${2:-all}"
+    need_root unban
+    if [[ "$jail" == "all" ]]; then
+        fail2ban-client unban "$ip"
+    else
+        fail2ban-client set "$jail" unbanip "$ip"
+    fi
+}
+
 case "${1:-help}" in
     on)       cmd_on ;;
     off)      cmd_off ;;
@@ -158,6 +294,10 @@ case "${1:-help}" in
               printf '%sddos-protect status:%s\n' "$DIM" "$RESET"
               cmd_status ;;
     restart)  cmd_off; cmd_on ;;
+    bans)     shift; cmd_bans "$@" ;;
+    stats)    cmd_stats ;;
+    ban)      shift; cmd_ban   "$@" ;;
+    unban)    shift; cmd_unban "$@" ;;
     help|-h|--help) cmd_help ;;
     *) echo "unknown command: $1"; cmd_help; exit 2 ;;
 esac

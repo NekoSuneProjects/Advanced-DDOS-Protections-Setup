@@ -62,6 +62,114 @@ function Show-Status {
     Write-Host '  4625 alert: ' -NoNewline; Paint (Get-TaskState 'DDoS-Protect Audit Burst'); Write-Host ''
 }
 
+function Show-Bans {
+    param([switch]$Top, [switch]$Geo, [int]$Hours = 24)
+
+    Write-Host "Failed logons (Security 4625) last $Hours h:" -ForegroundColor DarkGray
+    $events = @()
+    try {
+        $events = Get-WinEvent -FilterHashtable @{
+            LogName='Security'; ID=4625; StartTime=(Get-Date).AddHours(-$Hours)
+        } -ErrorAction Stop
+    } catch {
+        Write-Host '  (Security log empty or auditing disabled - run module 03-rdp.ps1)' -ForegroundColor Yellow
+    }
+
+    if ($events) {
+        $rows = $events | ForEach-Object {
+            $ip = $_.Properties[19].Value
+            if (-not $ip -or $ip -eq '-') { $ip = 'local' }
+            [PSCustomObject]@{
+                Time   = $_.TimeCreated
+                User   = $_.Properties[5].Value
+                Source = $ip
+            }
+        }
+        $grouped = $rows | Group-Object Source | Sort-Object Count -Descending
+        Write-Host ('  Distinct sources: {0}   Total attempts: {1}' -f $grouped.Count, $rows.Count)
+        Write-Host ''
+        $list = if ($Top) { $grouped | Select-Object -First 20 } else { $grouped }
+        $list | ForEach-Object {
+            $first = ($_.Group | Sort-Object Time | Select-Object -First 1).Time
+            $last  = ($_.Group | Sort-Object Time | Select-Object -Last  1).Time
+            $usrs  = ($_.Group.User | Sort-Object -Unique) -join ','
+            [PSCustomObject]@{
+                Source  = $_.Name
+                Count   = $_.Count
+                Users   = $usrs
+                First   = $first
+                Last    = $last
+            }
+        } | Format-Table -AutoSize
+    }
+
+    Write-Host ''
+    Write-Host 'Firewall blocks (DDoS-Protect rule group, last 24h):' -ForegroundColor DarkGray
+    try {
+        # Security event 5152 = WFP block. Filter to our rules by name.
+        $blocks = Get-WinEvent -FilterHashtable @{LogName='Security';ID=5152;StartTime=(Get-Date).AddHours(-24)} -ErrorAction SilentlyContinue
+        if ($blocks) {
+            $ours = $blocks | Where-Object { $_.Message -match 'DDoS-Protect' }
+            Write-Host ("  Blocked packets: {0}" -f $ours.Count)
+        } else {
+            Write-Host '  (WFP audit logging not enabled - auditpol /set /subcategory:"Filtering Platform Packet Drop" /failure:enable)' -ForegroundColor DarkGray
+        }
+    } catch { }
+
+    Write-Host ''
+    Write-Host ("Active rules in 'DDoS-Protect' group: {0}" -f `
+        (Get-NetFirewallRule -Group 'DDoS-Protect' -ErrorAction SilentlyContinue | Where-Object Enabled).Count) -ForegroundColor DarkGray
+
+    if ($Geo -and $events) {
+        Write-Host ''
+        Write-Host 'GeoIP (ip-api.com free tier):' -ForegroundColor DarkGray
+        $unique = $grouped.Name | Where-Object { $_ -ne 'local' -and $_ -notmatch '^127\.' -and $_ -notmatch '^10\.' -and $_ -notmatch '^192\.168\.' } | Select-Object -First 25
+        foreach ($ip in $unique) {
+            try {
+                $r = Invoke-RestMethod -Uri "http://ip-api.com/json/$ip`?fields=country,countryCode,isp,city" -TimeoutSec 4
+                "  {0,-18} {1,-3} {2,-25} {3}" -f $ip, $r.countryCode, $r.isp, $r.city
+            } catch { "  $ip  (lookup failed)" }
+            Start-Sleep -Milliseconds 300
+        }
+    }
+}
+
+function Show-Stats {
+    Show-Status
+    Write-Host ''
+    $sample = Join-Path $env:ProgramData 'ddos-protect\state\last-sample.json'
+    if (Test-Path $sample) {
+        Write-Host 'Last watcher sample:' -ForegroundColor DarkGray
+        Get-Content -Raw $sample | ConvertFrom-Json | Format-List
+    }
+    Write-Host 'Top 10 foreign IPs by established connections:' -ForegroundColor DarkGray
+    Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue |
+        Where-Object RemoteAddress -notmatch '^(127\.|0\.0\.0\.0|::|fe80)' |
+        Group-Object RemoteAddress |
+        Sort-Object Count -Descending |
+        Select-Object -First 10 |
+        Format-Table @{n='IP';e={$_.Name}}, Count -AutoSize
+}
+
+function Add-Ban {
+    param([string]$Ip)
+    if (-not $Ip) { Write-Host 'usage: ddos-protect ban <ip>' -ForegroundColor Red; return }
+    Assert-Admin
+    New-NetFirewallRule -DisplayName "DDoS-Protect Manual ban $Ip" `
+        -Group 'DDoS-Protect' -Direction Inbound -Action Block `
+        -RemoteAddress $Ip -Profile Any | Out-Null
+    Write-Host "Banned $Ip" -ForegroundColor Green
+}
+function Remove-Ban {
+    param([string]$Ip)
+    if (-not $Ip) { Write-Host 'usage: ddos-protect unban <ip>' -ForegroundColor Red; return }
+    Assert-Admin
+    Get-NetFirewallRule -Group 'DDoS-Protect' -ErrorAction SilentlyContinue |
+        Where-Object { (Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $_).RemoteAddress -contains $Ip } |
+        Remove-NetFirewallRule
+    Write-Host "Unbanned $Ip" -ForegroundColor Green
+}
+
 switch ($Command.ToLower()) {
     'on' {
         Assert-Admin
@@ -87,14 +195,28 @@ switch ($Command.ToLower()) {
     { $_ -in 'status','' } {
         Show-Status
     }
+    'bans' {
+        $top = $args -contains '--top'
+        $geo = $args -contains '--geo'
+        Show-Bans -Top:$top -Geo:$geo
+    }
+    'stats' { Show-Stats }
+    'ban'   { Add-Ban   ($args | Select-Object -First 1) }
+    'unban' { Remove-Ban ($args | Select-Object -First 1) }
     { $_ -in 'help','-h','--help','/?' } {
         @'
 Usage: ddos-protect <command>
 
-  on         Enable Windows Firewall rules + watcher + 4625 alert task
-  off        Disable everything (configs untouched)
-  status     Show component state
-  restart    off then on
+  on             Enable Windows Firewall rules + watcher + 4625 alert task
+  off            Disable everything (configs untouched)
+  status         Show component state
+  restart        off then on
+  bans           Failed logons last 24h grouped by source IP + firewall blocks
+  bans --top     Top 20 sources by failure count
+  bans --geo     Add GeoIP/ISP per source (ip-api.com free tier)
+  stats          Detailed: last watcher sample + top connected peers
+  ban <ip>       Add a manual block rule to the DDoS-Protect group
+  unban <ip>     Remove any DDoS-Protect rule matching that IP
 
 Components controlled:
   - Windows Firewall rules tagged Group "DDoS-Protect"
