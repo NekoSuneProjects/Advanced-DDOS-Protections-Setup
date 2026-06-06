@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+# ddos-protect — master on/off/status switch for the toolkit (Linux + macOS).
+# Installed to /usr/local/bin/ddos-protect by install.sh.
+#
+# Usage:
+#   ddos-protect on        # enable firewall + fail2ban + watcher
+#   ddos-protect off       # disable everything but keep configs (fast re-enable)
+#   ddos-protect status    # show current state of each component
+#   ddos-protect restart   # off then on
+#
+# Persistence: this is a runtime toggle. After reboot the system comes back ON
+# (the install state is the default). For permanent removal use uninstall.sh.
+set -euo pipefail
+
+GREEN=$'\033[32m'; RED=$'\033[31m'; YELLOW=$'\033[33m'; DIM=$'\033[2m'; RESET=$'\033[0m'
+
+is_root() { [[ $EUID -eq 0 ]]; }
+need_root() { is_root || { echo "Run as root: sudo ddos-protect $*" >&2; exit 1; }; }
+
+os() {
+    case "$(uname -s)" in
+        Linux*)  echo linux ;;
+        Darwin*) echo macos ;;
+        *)       echo unknown ;;
+    esac
+}
+
+# ---------- Firewall ----------
+fw_on_linux() {
+    if command -v nft >/dev/null 2>&1 && [[ -r /etc/ddos-protect/ddos.nft ]] && \
+       ! nft list table inet ddos_protect >/dev/null 2>&1; then
+        nft -f /etc/ddos-protect/ddos.nft
+    fi
+    if command -v iptables >/dev/null 2>&1; then
+        if iptables -L DDOS_PROTECT -n >/dev/null 2>&1; then
+            iptables -C INPUT -j DDOS_PROTECT 2>/dev/null || iptables -I INPUT 1 -j DDOS_PROTECT
+        fi
+    fi
+}
+fw_off_linux() {
+    command -v iptables >/dev/null 2>&1 && \
+        iptables -D INPUT -j DDOS_PROTECT 2>/dev/null || true
+    if command -v nft >/dev/null 2>&1 && nft list table inet ddos_protect >/dev/null 2>&1; then
+        nft delete table inet ddos_protect 2>/dev/null || true
+    fi
+}
+fw_status_linux() {
+    local on=0
+    command -v iptables >/dev/null 2>&1 && iptables -C INPUT -j DDOS_PROTECT 2>/dev/null && on=1
+    command -v nft >/dev/null 2>&1 && nft list table inet ddos_protect >/dev/null 2>&1 && on=1
+    (( on )) && echo on || echo off
+}
+
+fw_on_macos()  { [[ -f /etc/pf.anchors/ddos-protect ]] && pfctl -ef /etc/pf.conf 2>/dev/null || true; }
+fw_off_macos() { pfctl -d 2>/dev/null || true; }
+fw_status_macos() {
+    pfctl -s info 2>/dev/null | grep -q 'Status: Enabled' && echo on || echo off
+}
+
+# ---------- fail2ban ----------
+svc_on()  {
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl start "$1" 2>/dev/null || true
+    elif command -v brew >/dev/null 2>&1; then
+        sudo -u "${SUDO_USER:-$USER}" brew services start "$1" 2>/dev/null || true
+    fi
+}
+svc_off() {
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop "$1" 2>/dev/null || true
+    elif command -v brew >/dev/null 2>&1; then
+        sudo -u "${SUDO_USER:-$USER}" brew services stop "$1" 2>/dev/null || true
+    fi
+}
+svc_status() {
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl is-active --quiet "$1" && echo on || echo off
+    elif command -v brew >/dev/null 2>&1; then
+        sudo -u "${SUDO_USER:-$USER}" brew services list 2>/dev/null | awk -v s="$1" '$1==s {print $2}' \
+            | grep -qi started && echo on || echo off
+    else
+        echo unknown
+    fi
+}
+
+# ---------- Watcher ----------
+watcher_on_linux()  { svc_on  ddos-watcher.timer; }
+watcher_off_linux() { svc_off ddos-watcher.timer; }
+watcher_status_linux() { svc_status ddos-watcher.timer; }
+
+watcher_on_macos()  { launchctl load -w /Library/LaunchDaemons/com.ddosprotect.watcher.plist 2>/dev/null || true; }
+watcher_off_macos() { launchctl unload /Library/LaunchDaemons/com.ddosprotect.watcher.plist 2>/dev/null || true; }
+watcher_status_macos() {
+    launchctl list 2>/dev/null | awk '{print $3}' | grep -qx com.ddosprotect.watcher && echo on || echo off
+}
+
+# ---------- dispatch ----------
+cmd_on()  {
+    need_root on
+    case "$(os)" in
+        linux) fw_on_linux;  svc_on  fail2ban; watcher_on_linux ;;
+        macos) fw_on_macos;  svc_on  fail2ban; watcher_on_macos ;;
+        *) echo "Unsupported OS" >&2; exit 1 ;;
+    esac
+    printf '%sddos-protect: ON%s\n' "$GREEN" "$RESET"
+    cmd_status
+}
+
+cmd_off() {
+    need_root off
+    case "$(os)" in
+        linux) fw_off_linux; svc_off fail2ban; watcher_off_linux ;;
+        macos) fw_off_macos; svc_off fail2ban; watcher_off_macos ;;
+        *) echo "Unsupported OS" >&2; exit 1 ;;
+    esac
+    printf '%sddos-protect: OFF%s\n' "$YELLOW" "$RESET"
+    printf '%s(configs untouched — run "ddos-protect on" to re-enable, or uninstall.sh to remove)%s\n' \
+        "$DIM" "$RESET"
+}
+
+cmd_status() {
+    local fw f2b w
+    case "$(os)" in
+        linux) fw="$(fw_status_linux)"; w="$(watcher_status_linux)" ;;
+        macos) fw="$(fw_status_macos)"; w="$(watcher_status_macos)" ;;
+    esac
+    f2b="$(svc_status fail2ban)"
+    paint() { [[ "$1" == on ]] && echo "${GREEN}on${RESET}" || echo "${RED}off${RESET}"; }
+    printf '  Firewall:   %s\n' "$(paint "$fw")"
+    printf '  fail2ban:   %s\n' "$(paint "$f2b")"
+    printf '  Watcher:    %s\n' "$(paint "$w")"
+}
+
+cmd_help() {
+    cat <<USE
+Usage: ddos-protect <command>
+
+  on         Enable firewall hook, start fail2ban, start watcher
+  off        Disable everything (configs stay in place)
+  status     Show on/off state of each component
+  restart    off then on
+
+Components controlled:
+  • Edge firewall (iptables chain / nftables table / pf state)
+  • fail2ban service
+  • ddos-watcher (systemd timer / launchd daemon)
+
+For Cloudflare "Under Attack" mode:    ddos-cf on / off
+For ad-hoc notifications:              ddos-notify "title" "msg"
+For permanent removal:                 sudo /opt/ddos-protect/uninstall.sh
+USE
+}
+
+case "${1:-help}" in
+    on)       cmd_on ;;
+    off)      cmd_off ;;
+    status|"")
+              printf '%sddos-protect status:%s\n' "$DIM" "$RESET"
+              cmd_status ;;
+    restart)  cmd_off; cmd_on ;;
+    help|-h|--help) cmd_help ;;
+    *) echo "unknown command: $1"; cmd_help; exit 2 ;;
+esac

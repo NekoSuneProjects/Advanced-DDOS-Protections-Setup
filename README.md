@@ -118,6 +118,40 @@ The installer shows a menu:
 
 ---
 
+## Turn it on / off
+
+A single command flips every component of the toolkit on or off — without
+removing any configs. Reboot restores the install state (configs persist).
+For permanent removal use the uninstaller.
+
+### Linux / macOS
+```bash
+sudo ddos-protect on        # firewall + fail2ban + watcher: on
+sudo ddos-protect off       # all off, configs untouched
+sudo ddos-protect status    # show each component
+sudo ddos-protect restart   # off then on
+```
+
+### Windows (elevated PowerShell or cmd.exe)
+```powershell
+ddos-protect on             # firewall rules enabled + scheduled tasks running
+ddos-protect off            # everything disabled, configs untouched
+ddos-protect status
+ddos-protect restart
+```
+
+What gets toggled:
+- **Firewall**: iptables `DDOS_PROTECT` chain hook / nftables `ddos_protect`
+  table / pf state / Windows Firewall `DDoS-Protect` rule group
+- **fail2ban** service (Linux + macOS)
+- **Realtime watcher** (`ddos-watcher.timer` / launchd `com.ddosprotect.watcher`
+  / Scheduled Task `DDoS-Protect Watcher`)
+- **4625 alert task** (Windows)
+
+Cloudflare "Under Attack" mode is a separate switch: `ddos-cf on` / `ddos-cf off`.
+
+---
+
 ## Whitelist / allowlist
 
 Add your management IP **before** you tighten the firewall. Otherwise rate-limits

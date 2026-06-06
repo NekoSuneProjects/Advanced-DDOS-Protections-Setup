@@ -164,6 +164,7 @@ revert_notify() {
 }
 
 # Reverse order matches install order (12 -> 1):
+rm -f /usr/local/bin/ddos-protect
 revert_notify
 revert_cloudflare
 revert_unsafe_services

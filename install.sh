@@ -170,4 +170,10 @@ main() {
     done
 }
 
+install_control_cli() {
+    install -m 0755 "${SCRIPT_DIR}/scripts/ddos-protect" /usr/local/bin/ddos-protect
+    note "Master switch installed: ddos-protect on | off | status | restart"
+}
+
 main "$@"
+install_control_cli

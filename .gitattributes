@@ -3,6 +3,7 @@
 *.sh        text eol=lf
 *.bash      text eol=lf
 *.command   text eol=lf
+scripts/ddos-protect  text eol=lf
 *.conf      text eol=lf
 *.cfg       text eol=lf
 

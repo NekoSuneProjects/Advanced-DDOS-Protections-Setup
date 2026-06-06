@@ -111,3 +111,15 @@ while ($true) {
     }
     if ($choice -eq 1 -or $choice -eq 2) { break }
 }
+
+# Install master switch into %ProgramData% + add a CMD shim on PATH.
+$ctlSrc = Join-Path $Script:ScriptRoot 'scripts\ddos-protect.ps1'
+$ctlDir = Join-Path $env:ProgramData 'ddos-protect'
+New-Item -ItemType Directory -Force -Path $ctlDir | Out-Null
+Copy-Item -Force $ctlSrc (Join-Path $ctlDir 'ddos-protect.ps1')
+$shimDir = "$env:SystemRoot\System32"
+@"
+@echo off
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ProgramData%\ddos-protect\ddos-protect.ps1" %*
+"@ | Set-Content -Path (Join-Path $shimDir 'ddos-protect.cmd') -Encoding ASCII
+Write-Note 'Master switch installed: ddos-protect on | off | status | restart'

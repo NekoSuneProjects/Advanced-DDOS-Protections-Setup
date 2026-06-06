@@ -78,8 +78,9 @@ if ($state -and $state.debloat -and $state.debloat.removed) {
     }
 } else { Write-Note 'No UWP apps to re-register' }
 
-# 5) Strip ddos-protect helper bin (Cloudflare / Notify).
+# 5) Strip ddos-protect helper bin (Cloudflare / Notify / Master switch).
 Write-Step 'Removing helper scripts'
+Remove-Item -Force "$env:SystemRoot\System32\ddos-protect.cmd" -ErrorAction SilentlyContinue
 $bin = Join-Path $env:ProgramData 'ddos-protect'
 if (Test-Path $bin) {
     Remove-Item $bin -Recurse -Force -ErrorAction SilentlyContinue
