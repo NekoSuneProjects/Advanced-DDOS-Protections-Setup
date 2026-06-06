@@ -1,0 +1,11 @@
+# Telemetry / data-collection Windows services disabled by 06-telemetry.ps1.
+# Uninstaller restores each to its previous start type from state.json.
+DiagTrack
+dmwappushservice
+diagnosticshub.standardcollector.service
+WerSvc
+WMPNetworkSvc
+RetailDemo
+PcaSvc
+MapsBroker
+RemoteRegistry

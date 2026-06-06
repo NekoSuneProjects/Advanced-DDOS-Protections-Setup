@@ -1,0 +1,27 @@
+# Microsoft telemetry endpoints blocked by Windows Firewall (outbound) when
+# 06-telemetry.ps1 runs. Lines starting with # are ignored.
+# These are FQDNs that Windows itself uses to ship telemetry; blocking them is
+# safe for most desktops but you may want to keep settings-services.s-microsoft.com
+# enabled on Insider builds.
+vortex.data.microsoft.com
+vortex-win.data.microsoft.com
+telecommand.telemetry.microsoft.com
+oca.telemetry.microsoft.com
+sqm.telemetry.microsoft.com
+watson.telemetry.microsoft.com
+redir.metaservices.microsoft.com
+choice.microsoft.com
+df.telemetry.microsoft.com
+reports.wes.df.telemetry.microsoft.com
+services.wes.df.telemetry.microsoft.com
+sqm.df.telemetry.microsoft.com
+telemetry.microsoft.com
+watson.ppe.telemetry.microsoft.com
+telemetry.appex.bing.net
+telemetry.urs.microsoft.com
+settings-sandbox.data.microsoft.com
+cs1.wpc.v0cdn.net
+statsfe2.ws.microsoft.com
+corpext.msitadfs.glbdns2.microsoft.com
+compatexchange.cloudapp.net
+diagnostics.support.microsoft.com

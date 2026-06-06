@@ -1,0 +1,24 @@
+# Force LF on all shell scripts so they remain executable on Linux/Mac
+# when authored on Windows.
+*.sh        text eol=lf
+*.bash      text eol=lf
+*.command   text eol=lf
+*.conf      text eol=lf
+*.cfg       text eol=lf
+
+# Force CRLF on Windows scripts.
+*.ps1       text eol=crlf
+*.psm1      text eol=crlf
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+
+# Treat configs and lists as text.
+*.txt       text
+*.md        text
+*.json      text
+
+# Mark binary explicitly.
+*.png       binary
+*.jpg       binary
+*.gz        binary
+*.zip       binary

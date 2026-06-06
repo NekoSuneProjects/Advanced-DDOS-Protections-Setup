@@ -1,0 +1,62 @@
+# ---------- Runtime artifacts ----------
+*.log
+*.log.*
+logs/
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+
+# ---------- Restore points / state (machine-specific) ----------
+restore/
+state/
+**/restore/*.json
+**/restore/*.reg
+**/restore/*.tar.gz
+**/state/*.json
+**/state/*.snapshot
+
+# ---------- OS noise ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+ehthumbs.db
+
+# ---------- Editor / IDE ----------
+.vscode/
+.idea/
+*.iml
+*.sublime-workspace
+*.sublime-project
+
+# ---------- Secrets / local overrides ----------
+# Never commit machine-local config, allow-lists, or anything with IPs
+local.conf
+*.local
+*.local.*
+.env
+.env.*
+secrets/
+**/secrets/*
+allowlist.txt
+denylist.txt
+
+# ---------- Build / test outputs ----------
+dist/
+build/
+out/
+node_modules/
+__pycache__/
+*.pyc
+
+# ---------- Windows installer / extract ----------
+*.cab
+*.msi
+*.exe.bak
+
+# ---------- Crash / dump files ----------
+*.dmp
+core
+core.*
